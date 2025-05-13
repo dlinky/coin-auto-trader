@@ -5,6 +5,23 @@ import tkcalendar
 from binance.client import Client
 import pandas as pd
 from backtest import Backtest
+from binance.exceptions import BinanceAPIException
+import numpy as np
+from indicators import TechnicalIndicators
+import time
+import logging
+import os
+from dotenv import load_dotenv
+
+# 로깅 설정
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler('trading.log'),
+        logging.StreamHandler()
+    ]
+)
 
 class BacktestWindow:
     def __init__(self, root):
@@ -423,7 +440,224 @@ class BacktestWindow:
             self.hide_progress()
             messagebox.showerror("에러", f"다중 티커 테스트 중 오류가 발생했습니다: {str(e)}")
 
-if __name__ == '__main__':
-    root = tk.Tk()
-    app = BacktestWindow(root)
-    root.mainloop() 
+class AutoTrader:
+    def __init__(self, symbol, interval='1m', leverage=1):
+        # 환경 변수 로드
+        load_dotenv()
+        
+        # API 클라이언트 초기화
+        self.client = Client(
+            os.getenv('BINANCE_API_KEY'),
+            os.getenv('BINANCE_API_SECRET')
+        )
+        
+        self.symbol = symbol
+        self.interval = interval
+        self.leverage = leverage
+        self.position = 0
+        self.entry_price = 0
+        self.stop_loss = 0
+        self.take_profit = 0
+        self.quantity = 0
+        self.oversold = 0
+        
+        # 수수료와 슬리피지 설정
+        self.commission_rate = 0.0002  # 0.02% 수수료
+        self.slippage_rate = 0.0002    # 0.02% 슬리피지
+        
+        # 레버리지 설정
+        try:
+            self.client.futures_change_leverage(symbol=symbol, leverage=leverage)
+            logging.info(f"레버리지 {leverage}x로 설정 완료")
+        except BinanceAPIException as e:
+            logging.error(f"레버리지 설정 실패: {str(e)}")
+            raise
+    
+    def get_historical_data(self, limit=100):
+        """과거 데이터 가져오기"""
+        try:
+            klines = self.client.futures_klines(
+                symbol=self.symbol,
+                interval=self.interval,
+                limit=limit
+            )
+            
+            df = pd.DataFrame(klines, columns=[
+                'timestamp', 'open', 'high', 'low', 'close', 'volume',
+                'close_time', 'quote_asset_volume', 'number_of_trades',
+                'taker_buy_base_asset_volume', 'taker_buy_quote_asset_volume', 'ignore'
+            ])
+            
+            df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
+            for col in ['open', 'high', 'low', 'close', 'volume']:
+                df[col] = df[col].astype(float)
+            
+            df.set_index('timestamp', inplace=True)
+            return df
+        except BinanceAPIException as e:
+            logging.error(f"데이터 가져오기 실패: {str(e)}")
+            return None
+    
+    def calculate_indicators(self, data):
+        """기술적 지표 계산"""
+        # RSI
+        data['rsi'] = TechnicalIndicators.calculate_rsi(data['close'])
+        
+        # MACD
+        data['macd'], data['signal'] = TechnicalIndicators.calculate_macd(data['close'])
+        data['macd_crossover'] = TechnicalIndicators.find_macd_crossovers(data['macd'], data['signal'])
+        
+        # 스토캐스틱
+        data['stoch_k'], data['stoch_d'] = TechnicalIndicators.calculate_stochastic(data)
+        
+        return data
+    
+    def find_last_macd_death_cross_low(self, data):
+        """MACD 데드크로스 이후의 최저가 찾기"""
+        death_crosses = data[data['macd_crossover'] == -1]
+        
+        if len(death_crosses) == 0:
+            return None
+            
+        last_death_cross = death_crosses.index[-1]
+        low_after_death = data.loc[last_death_cross:, 'low'].min()
+        return low_after_death
+    
+    def get_account_balance(self):
+        """계정 잔고 조회"""
+        try:
+            account = self.client.futures_account_balance()
+            for balance in account:
+                if balance['asset'] == 'USDT':
+                    return float(balance['balance'])
+            return 0
+        except BinanceAPIException as e:
+            logging.error(f"잔고 조회 실패: {str(e)}")
+            return 0
+    
+    def place_order(self, side, quantity, price=None, stop_price=None, take_profit_price=None):
+        """주문 실행"""
+        try:
+            # 메인 주문
+            order = self.client.futures_create_order(
+                symbol=self.symbol,
+                side=side,
+                type='LIMIT' if price else 'MARKET',
+                timeInForce='GTC',
+                quantity=quantity,
+                price=price
+            )
+            
+            # 스탑로스 주문
+            if stop_price:
+                self.client.futures_create_order(
+                    symbol=self.symbol,
+                    side='SELL' if side == 'BUY' else 'BUY',
+                    type='STOP_MARKET',
+                    stopPrice=stop_price,
+                    closePosition=True
+                )
+            
+            # 익절 주문
+            if take_profit_price:
+                self.client.futures_create_order(
+                    symbol=self.symbol,
+                    side='SELL' if side == 'BUY' else 'BUY',
+                    type='TAKE_PROFIT_MARKET',
+                    stopPrice=take_profit_price,
+                    closePosition=True
+                )
+            
+            logging.info(f"주문 실행 완료: {side} {quantity} {self.symbol}")
+            return order
+        except BinanceAPIException as e:
+            logging.error(f"주문 실행 실패: {str(e)}")
+            return None
+    
+    def run(self):
+        """트레이딩 실행"""
+        logging.info(f"트레이딩 시작: {self.symbol}")
+        
+        while True:
+            try:
+                # 과거 데이터 가져오기
+                data = self.get_historical_data()
+                if data is None:
+                    time.sleep(60)
+                    continue
+                
+                # 지표 계산
+                data = self.calculate_indicators(data)
+                
+                # 현재 가격과 지표값
+                current_price = float(data['close'].iloc[-1])
+                stoch_k = data['stoch_k'].iloc[-1]
+                stoch_d = data['stoch_d'].iloc[-1]
+                rsi = data['rsi'].iloc[-1]
+                macd = data['macd'].iloc[-1]
+                signal = data['signal'].iloc[-1]
+                
+                # 과매도 구간 진입 확인
+                if stoch_k < 20 and stoch_d < 20:
+                    self.oversold = 1
+                
+                # 포지션이 없는 경우 진입 조건 확인
+                if self.position == 0:
+                    # 1차 조건: 과매도 구간에 진입했다가 상향돌파
+                    first_condition = (
+                        self.oversold == 1 and
+                        stoch_k >= 20 and
+                        stoch_d >= 20
+                    )
+                    
+                    # 2차 조건: RSI 중간선 돌파, MACD 상향, 과매수 구간 아님
+                    second_condition = (
+                        rsi > 50 and
+                        macd > signal and
+                        stoch_k < 80 and
+                        stoch_d < 80
+                    )
+                    
+                    # 두 조건 모두 만족하면 진입
+                    if first_condition and second_condition:
+                        # 진입 수량 계산
+                        balance = self.get_account_balance()
+                        quantity = (balance * 0.95 * self.leverage) / current_price
+                        quantity = round(quantity, 3)  # 수량 반올림
+                        
+                        # 주문 실행
+                        order = self.place_order('BUY', quantity)
+                        if order:
+                            self.position = 1
+                            self.entry_price = current_price
+                            self.quantity = quantity
+                            self.oversold = 0
+                            
+                            # 손절가 설정
+                            stop_loss = self.find_last_macd_death_cross_low(data)
+                            if stop_loss is None:
+                                stop_loss = current_price * 0.95
+                            
+                            # 익절가 설정
+                            take_profit = stop_loss + (current_price - stop_loss) * 1.5
+                            
+                            # 스탑로스와 익절 주문
+                            self.place_order('SELL', quantity, stop_price=stop_loss, take_profit_price=take_profit)
+                            
+                            logging.info(f"포지션 진입: 가격={current_price}, 수량={quantity}, 손절={stop_loss}, 익절={take_profit}")
+                
+                time.sleep(60)  # 1분 대기
+                
+            except Exception as e:
+                logging.error(f"오류 발생: {str(e)}")
+                time.sleep(60)
+
+if __name__ == "__main__":
+    # 거래 설정
+    SYMBOL = "BTCUSDT"
+    INTERVAL = "1m"
+    LEVERAGE = 1
+    
+    # 트레이더 실행
+    trader = AutoTrader(SYMBOL, INTERVAL, LEVERAGE)
+    trader.run() 
