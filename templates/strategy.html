@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>전략 설정 - 바이낸스 자동거래</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
+</head>
+<body>
+    <nav class="navbar navbar-expand-lg navbar-dark bg-dark">
+        <div class="container">
+            <a class="navbar-brand" href="/">
+                <i class="fas fa-chart-line"></i> 바이낸스 자동거래
+            </a>
+            <div class="navbar-nav ms-auto">
+                <a class="nav-link" href="/">대시보드</a>
+                <a class="nav-link" href="/optimization">최적화</a>
+            </div>
+        </div>
+    </nav>
+    <div class="container mt-5">
+        <h2 class="mb-4">전략 파라미터 설정</h2>
+        <form id="strategy-form">
+            <div class="mb-3">
+                <label for="strategy-type" class="form-label">전략 종류</label>
+                <select class="form-select" id="strategy-type" name="strategy-type">
+                    <option value="ma">이동평균 크로스오버</option>
+                    <option value="rsi">RSI + 추세선 돌파</option>
+                </select>
+            </div>
+            <div class="mb-3">
+                <label for="symbol-select" class="form-label">코인 선택</label>
+                <select class="form-select" id="symbol-select" name="symbol-select">
+                    <option value="BTC/USDT:USDT">BTC/USDT</option>
+                    <option value="ETH/USDT:USDT">ETH/USDT</option>
+                </select>
+                <button type="button" class="btn btn-outline-info btn-sm mt-2" id="volatile-btn">고변동성 코인 불러오기</button>
+            </div>
+            <div id="ma-params">
+                <div class="mb-3">
+                    <label for="ma-short" class="form-label">단기 이동평균 기간</label>
+                    <input type="number" class="form-control" id="ma-short" name="ma-short" value="5" min="1">
+                </div>
+                <div class="mb-3">
+                    <label for="ma-long" class="form-label">장기 이동평균 기간</label>
+                    <input type="number" class="form-control" id="ma-long" name="ma-long" value="20" min="2">
+                </div>
+            </div>
+            <div id="rsi-params" style="display:none;">
+                <div class="mb-3">
+                    <label for="rsi-period" class="form-label">RSI 기간</label>
+                    <input type="number" class="form-control" id="rsi-period" name="rsi-period" value="14" min="2">
+                </div>
+                <div class="mb-3">
+                    <label for="rsi-overbought" class="form-label">과매수 기준</label>
+                    <input type="number" class="form-control" id="rsi-overbought" name="rsi-overbought" value="70" min="50" max="100">
+                </div>
+                <div class="mb-3">
+                    <label for="rsi-oversold" class="form-label">과매도 기준</label>
+                    <input type="number" class="form-control" id="rsi-oversold" name="rsi-oversold" value="30" min="0" max="50">
+                </div>
+            </div>
+            <button type="submit" class="btn btn-primary">저장</button>
+        </form>
+        <div id="save-alert" class="alert alert-success mt-4 d-none" role="alert">
+            전략 파라미터가 저장되었습니다!
+        </div>
+    </div>
+    <script>
+        function loadVolatileCoinsAndRecommend() {
+            fetch('/api/volatile_coins')
+                .then(res => res.json())
+                .then(data => {
+                    if (data.success) {
+                        const coins = data.coins || data.data;
+                        const symbolSelect = document.getElementById('symbol-select');
+                        symbolSelect.innerHTML = '';
+                        symbolSelect.innerHTML += '<option value="BTC/USDT:USDT">BTC/USDT</option>';
+                        symbolSelect.innerHTML += '<option value="ETH/USDT:USDT">ETH/USDT</option>';
+                        symbolSelect.innerHTML += '<option disabled>──────────────</option>';
+                        coins.forEach(coin => {
+                            symbolSelect.innerHTML += `<option value="${coin.symbol}">${coin.symbol.replace(':USDT','')}</option>`;
+                        });
+                    }
+                });
+        }
+
+        document.getElementById('volatile-btn').addEventListener('click', function(e) {
+            e.preventDefault();
+            loadVolatileCoinsAndRecommend();
+        });
+
+        document.getElementById('strategy-type').addEventListener('change', function() {
+            if (this.value === 'rsi') {
+                loadVolatileCoinsAndRecommend();
+            } else {
+                const symbolSelect = document.getElementById('symbol-select');
+                symbolSelect.innerHTML = '';
+                symbolSelect.innerHTML += '<option value="BTC/USDT:USDT">BTC/USDT</option>';
+                symbolSelect.innerHTML += '<option value="ETH/USDT:USDT">ETH/USDT</option>';
+            }
+        });
+
+        // 폼 제출 시 저장 알림 표시 (실제 저장 로직은 추후 구현)
+        document.getElementById('strategy-form').addEventListener('submit', function(e) {
+            e.preventDefault();
+            document.getElementById('save-alert').classList.remove('d-none');
+            setTimeout(() => {
+                document.getElementById('save-alert').classList.add('d-none');
+            }, 2000);
+        });
+    </script>
+</body>
+</html> 

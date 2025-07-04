@@ -1,0 +1,47 @@
+{
+  "timestamp": "2025-07-04T17:07:42.460330",
+  "portfolio": [
+    {
+      "symbol": "FUN/USDT:USDT",
+      "strategy": "rsi",
+      "params": {
+        "rsi_buy": 28,
+        "rsi_sell": 72,
+        "stop_loss": -0.015,
+        "take_profit": 0.03,
+        "support_distance": 0.03
+      },
+      "return": 3164.2475567004694,
+      "win_rate": 56.79012345679012,
+      "max_drawdown": 0
+    },
+    {
+      "symbol": "H/USDT:USDT",
+      "strategy": "ma",
+      "params": {
+        "short_period": 5,
+        "long_period": 20,
+        "stop_loss": -0.015,
+        "take_profit": 0.03,
+        "max_hold_hours": 24
+      },
+      "return": 2309.929424285441,
+      "win_rate": 42.168674698795186,
+      "max_drawdown": 0
+    },
+    {
+      "symbol": "BR/USDT:USDT",
+      "strategy": "rsi",
+      "params": {
+        "rsi_buy": 28,
+        "rsi_sell": 70,
+        "stop_loss": -0.015,
+        "take_profit": 0.03,
+        "support_distance": 0.03
+      },
+      "return": 2013.2155049640896,
+      "win_rate": 81.3953488372093,
+      "max_drawdown": 0
+    }
+  ]
+}
